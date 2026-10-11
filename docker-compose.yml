@@ -1,0 +1,10 @@
+services:
+  agent:
+    build: .
+    ports:
+      - "8787:8787"
+    environment:
+      QUANT_EXCEL: /excel/集换社交易汇总数据.xlsx
+    volumes:
+      - ../集换社交易汇总数据.xlsx:/excel/集换社交易汇总数据.xlsx:ro
+      - ./data:/app/data

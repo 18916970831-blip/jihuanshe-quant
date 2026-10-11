@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: jihuanshe-quant
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: singapore
+    healthCheckPath: /api/status
+    envVars:
+      - key: QUANT_SHARE
+        value: "1"
