@@ -176,6 +176,7 @@ def list_trades(
     card_code: str | None = None,
     grade: str | None = None,
     bundle: bool | None = None,
+    on: date | None = None,
     limit: int = Query(80, le=500),
     db: Session = Depends(get_db),
 ):
@@ -186,6 +187,8 @@ def list_trades(
         stmt = stmt.where(Trade.grade == grade)
     if bundle is not None:
         stmt = stmt.where(Trade.is_bundle.is_(bundle))
+    if on is not None:
+        stmt = stmt.where(Trade.trade_date == on)
     rows = db.scalars(stmt.limit(limit)).all()
     return [dump_trade(row) for row in rows]
 
@@ -227,12 +230,60 @@ def create_trade(payload: TradeIn, force: bool = False, db: Session = Depends(ge
     db.commit()
     schedule_publish()
     db.refresh(row)
-    day_rows = db.scalars(select(Trade).where(Trade.card_code == card.card_code, Trade.trade_date == payload.trade_date, Trade.grade == "PSA10", Trade.is_bundle.is_(False))).all()
+    return {"trade": dump_trade(row), "today": _day_median(db, card.card_code, payload.trade_date)}
+
+
+@router.patch("/trades/{trade_id}")
+def update_trade(trade_id: str, payload: TradeIn, force: bool = False, db: Session = Depends(get_db)):
+    row = db.get(Trade, trade_id)
+    if row is None:
+        raise HTTPException(404, "找不到成交")
+    card = db.get(Card, payload.card_code)
+    if card is None:
+        raise HTTPException(404, "请先在卡牌库里添加这张卡")
+    old_code = row.card_code
+    grade = normalize_grade(payload.grade)
+    trade_time = payload.trade_time or time(0, 0, 0)
+    when = datetime.combine(payload.trade_date, trade_time)
+    duplicate = db.scalars(
+        select(Trade).where(
+            Trade.id != row.id,
+            Trade.card_code == card.card_code,
+            Trade.trade_datetime == when,
+            Trade.price == payload.price,
+            Trade.grade == grade,
+        )
+    ).first()
+    if duplicate and not force:
+        raise HTTPException(409, "同一张卡、同一时间、同一价格已有记录。确认后可强制保存。")
+    row.card_code = card.card_code
+    row.card_name = card.card_name
+    row.trade_date = payload.trade_date
+    row.trade_time = trade_time
+    row.trade_datetime = when
+    row.price = payload.price
+    row.grade = grade
+    row.notes = payload.notes
+    row.is_bundle = payload.mark_bundle or detect_bundle(card.card_name, payload.notes)
+    row.updated_at = datetime.now()
+    db.flush()
+    refresh_suspicious(db, card.card_code)
+    if old_code != card.card_code:
+        refresh_suspicious(db, old_code)
+    _audit(db, "update_trade", f"{card.card_code} {payload.price} {grade}")
+    db.commit()
+    schedule_publish()
+    db.refresh(row)
+    return {"trade": dump_trade(row), "today": _day_median(db, card.card_code, payload.trade_date)}
+
+
+def _day_median(db: Session, card_code: str, trade_date: date) -> dict:
+    day_rows = db.scalars(select(Trade).where(Trade.card_code == card_code, Trade.trade_date == trade_date, Trade.grade == "PSA10", Trade.is_bundle.is_(False))).all()
     prices = sorted(item.price for item in day_rows)
     median = prices[len(prices) // 2] if prices else None
     if prices and len(prices) % 2 == 0:
         median = (prices[len(prices) // 2 - 1] + prices[len(prices) // 2]) / 2
-    return {"trade": dump_trade(row), "today": {"count": len(prices), "median": median}}
+    return {"count": len(prices), "median": median}
 
 
 @router.delete("/trades/{trade_id}")

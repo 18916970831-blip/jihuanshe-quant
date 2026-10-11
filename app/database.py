@@ -32,16 +32,15 @@ class Base(DeclarativeBase):
 
 
 def get_db():
-    with swap_lock:
-        db = SessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def replace_database(src: Path) -> None:
-    """Swap in a verified SQLite file. Callers must not be inside get_db."""
+    """Swap in a verified SQLite file between requests."""
     with swap_lock:
         engine.dispose()
         for suffix in ("-wal", "-shm"):

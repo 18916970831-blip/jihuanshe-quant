@@ -1,5 +1,5 @@
 const charts = [];
-const state = { dashboard: null, code: null, showExtreme: false, readonly: false };
+const state = { dashboard: null, code: null, showExtreme: false, readonly: false, editing: null, entryDate: "", entryCard: "", entryNote: "" };
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -435,26 +435,39 @@ async function renderCompare() {
 async function renderEntry() {
   const root = viewRoot();
   if (ownerOnly(root, "录入")) return;
-  const [cards, trades] = await Promise.all([api("/api/cards"), api("/api/trades?limit=12")]);
+  const query = new URLSearchParams({ limit: "40" });
+  if (state.entryDate) query.set("on", state.entryDate);
+  if (state.entryCard) query.set("card_code", state.entryCard);
+  const [cards, trades] = await Promise.all([api("/api/cards"), api(`/api/trades?${query}`)]);
   const today = new Date().toISOString().slice(0, 10);
+  const editing = state.editing;
   root.innerHTML = `
     <div class="stack">
       <section class="panel">
-        <h2>录入一笔成交</h2>
+        <h2 id="trade-title">${editing ? "修改这笔成交" : "录入一笔成交"}</h2>
         <p class="sub">品相会自动归并，备注里出现套出、套卡、打包会标成套出，不进 PSA10 计价。</p>
         <form id="trade-form" class="form">
-          <label>卡牌<select name="card_code" required>${cards.map((card) => `<option value="${esc(card.card_code)}">${esc(card.card_code)} ${esc(card.card_name)}</option>`).join("")}</select></label>
-          <label>日期<input name="trade_date" type="date" value="${today}" required /></label>
-          <label>时间<input name="trade_time" type="time" value="20:00" /></label>
-          <label>成交价<input name="price" type="number" min="0.01" step="0.01" required /></label>
-          <label>品相<select name="grade"><option>PSA10</option><option>PSA9</option><option>PSA8</option><option>PCG10</option><option>BGS10</option><option>其他</option></select></label>
-          <label class="check">标记套出<input name="mark_bundle" type="checkbox" /></label>
-          <label class="span-3">备注<textarea name="notes" placeholder="可选"></textarea></label>
-          <div class="span-3 actions"><button class="btn" type="submit">保存</button><span id="trade-msg" class="note"></span></div>
+          <label>卡牌<select name="card_code" required>${cards.map((card) => `<option value="${esc(card.card_code)}" ${editing && editing.card_code === card.card_code ? "selected" : ""}>${esc(card.card_code)} ${esc(card.card_name)}</option>`).join("")}</select></label>
+          <label>日期<input name="trade_date" type="date" value="${esc(editing ? editing.trade_date : today)}" required /></label>
+          <label>时间<input name="trade_time" type="time" value="${esc(editing ? (editing.trade_time || "00:00").slice(0, 5) : "20:00")}" /></label>
+          <label>成交价<input name="price" type="number" min="0.01" step="0.01" required value="${editing ? esc(editing.price) : ""}" /></label>
+          <label>品相<select name="grade">${["PSA10", "PSA9", "PSA8", "PCG10", "BGS10", "其他"].map((grade) => `<option ${editing && editing.grade === grade ? "selected" : ""}>${esc(grade)}</option>`).join("")}</select></label>
+          <label class="check">标记套出<input name="mark_bundle" type="checkbox" ${editing && editing.is_bundle ? "checked" : ""} /></label>
+          <label class="span-3">备注<textarea name="notes" placeholder="可选">${esc(editing ? editing.notes || "" : "")}</textarea></label>
+          <div class="span-3 actions">
+            <button class="btn" type="submit" id="trade-submit">${editing ? "保存修改" : "保存"}</button>
+            <button class="btn ghost" type="button" id="trade-cancel" ${editing ? "" : "hidden"}>取消修改</button>
+            <span id="trade-msg" class="note"></span>
+          </div>
         </form>
       </section>
       <section class="panel">
-        <h3>最近成交</h3>
+        <h3>修改或删除</h3>
+        <p class="sub">最近的成交在最上面。录错了点修改，不需要了点删除。改完后分析会重算。</p>
+        <form id="trade-filter" class="form">
+          <label>按日期<input name="on" type="date" value="${esc(state.entryDate || "")}" /></label>
+          <label>按卡牌<select name="card_code"><option value="">全部</option>${cards.map((card) => `<option value="${esc(card.card_code)}" ${state.entryCard === card.card_code ? "selected" : ""}>${esc(card.card_code)}</option>`).join("")}</select></label>
+        </form>
         ${tradeRows(trades)}
       </section>
     </div>`;
@@ -472,25 +485,54 @@ async function renderEntry() {
     };
     await submitTrade(payload, false);
   };
+  document.getElementById("trade-cancel").onclick = () => {
+    state.editing = null;
+    renderEntry();
+  };
+  document.getElementById("trade-filter").onchange = (event) => {
+    const form = event.currentTarget;
+    state.entryDate = form.on.value;
+    state.entryCard = form.card_code.value;
+    renderEntry();
+  };
+  root.querySelectorAll("[data-edit]").forEach((button) => {
+    button.onclick = () => {
+      state.editing = trades.find((row) => row.id === button.dataset.edit) || null;
+      renderEntry();
+    };
+  });
+  if (state.entryNote) {
+    const msg = document.getElementById("trade-msg");
+    msg.className = "ok";
+    msg.textContent = state.entryNote;
+    state.entryNote = "";
+  }
 }
 
 async function submitTrade(payload, force) {
   const msg = document.getElementById("trade-msg");
+  const editing = state.editing;
   try {
-    const result = await api(`/api/trades?force=${force ? "true" : "false"}`, {
-      method: "POST",
+    const path = editing ? `/api/trades/${editing.id}?force=${force ? "true" : "false"}` : `/api/trades?force=${force ? "true" : "false"}`;
+    const result = await api(path, {
+      method: editing ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    msg.className = "ok";
-    msg.textContent = `已保存。当日 PSA10 真实成交 ${result.today.count} 笔，中位价 ${cny(result.today.median)}。分析已重算，公网页面大约一两分钟后自动跟上。`;
+    state.editing = null;
+    state.entryNote = editing
+      ? `已改成 ${cny(result.trade.price)}。当日 PSA10 中位价 ${cny(result.today.median)}。分析已重算，公网页面大约一两分钟后自动跟上。`
+      : `已保存。当日 PSA10 真实成交 ${result.today.count} 笔，中位价 ${cny(result.today.median)}。分析已重算，公网页面大约一两分钟后自动跟上。`;
     refreshStatus();
+    renderEntry();
   } catch (error) {
     if (!force && error.message.includes("强制")) {
       if (confirm(`${error.message}\n仍然保存？`)) return submitTrade(payload, true);
     }
-    msg.className = "error";
-    msg.textContent = error.message;
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = error.message;
+    }
   }
 }
 
@@ -503,7 +545,7 @@ function tradeRows(trades) {
       <td class="mono">${cny(row.price)}</td>
       <td>${esc(row.grade)}</td>
       <td>${row.is_bundle ? "是" : ""}</td>
-      <td><button class="btn ghost small" data-del="${esc(row.id)}">删除</button></td>
+      <td class="row-actions"><button class="btn small" data-edit="${esc(row.id)}">修改</button><button class="btn ghost small" data-del="${esc(row.id)}">删除</button></td>
     </tr>`).join("")}</table>`;
 }
 
@@ -764,7 +806,8 @@ async function route() {
 document.getElementById("view").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-del]");
   if (!button) return;
-  if (!confirm("删除这笔成交？")) return;
+  if (!confirm("删除这笔成交？删除后分析会按剩下的成交重算。")) return;
+  if (state.editing && state.editing.id === button.dataset.del) state.editing = null;
   await api(`/api/trades/${button.dataset.del}`, { method: "DELETE" });
   route();
   refreshStatus();

@@ -109,6 +109,7 @@ textarea { min-height: 72px; resize: vertical; }
 }
 .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
 .btn.small { padding: 4px 8px; font-size: 12px; }
+.row-actions { display: flex; gap: 6px; white-space: nowrap; }
 .note { color: var(--muted); font-size: 13px; }
 .error { background: #fdeceb; color: #7d241d; padding: 12px 14px; border-radius: 12px; }
 .ok { background: #e7f6ee; color: #145c36; padding: 12px 14px; border-radius: 12px; }
