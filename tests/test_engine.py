@@ -71,6 +71,24 @@ class MetricTests(unittest.TestCase):
         decision = decide(metrics)
         self.assertEqual(decision["action"], "卖出/减仓")
 
+    def test_extended_rally_is_not_a_buy(self):
+        decision = decide(
+            {
+                "has_psa10": True,
+                "latest_price": 1429,
+                "percentile": 0.88,
+                "returns": {"d7": {"return": 0.243}, "d30": {"return": 0.237}},
+                "volume": {"change_7d": -0.417, "avg_active": 3.9},
+                "risk": {"max_drawdown": -0.258},
+                "divergence": {"signal": "价升量缩"},
+                "warnings": [],
+                "prediction": {},
+            }
+        )
+        self.assertEqual(decision["action"], "观望")
+        self.assertTrue(any("不追" in line for line in decision["reasons"]))
+        self.assertGreaterEqual(len(decision["reasons"]), 3)
+
 
 class PublishTests(unittest.TestCase):
     def test_rejects_a_non_database(self):
