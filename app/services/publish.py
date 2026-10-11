@@ -1,12 +1,10 @@
 import hashlib
-import json
 import logging
 import os
 import sqlite3
 import subprocess
 import threading
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -16,20 +14,21 @@ logger = logging.getLogger("quant.publish")
 
 REPO = "18916970831-blip/jihuanshe-quant"
 BRANCH = "main"
-DB_URL = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/data/market.db"
-COMMITS_URL = f"https://api.github.com/repos/{REPO}/commits?sha={BRANCH}&path=data/market.db&per_page=1"
+DB_URLS = [
+    f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/data/market.db",
+    f"https://github.com/{REPO}/raw/{BRANCH}/data/market.db",
+]
 SYNC_URL = os.environ.get("QUANT_SYNC_URL", "https://jihuanshe-quant.onrender.com/api/sync")
 
 DEBOUNCE_SECONDS = 15
 MAX_WAIT_SECONDS = 60
-POLL_SECONDS = 90
+POLL_SECONDS = 120
 
 _lock = threading.Lock()
 _push_lock = threading.Lock()
 _timer: threading.Timer | None = None
 _generation = 0
 _waiting_since: float | None = None
-_last_sha: str | None = None
 _last_check = 0.0
 _state = "idle"
 _detail = ""
@@ -77,30 +76,22 @@ def publish_if_dirty() -> None:
 
 
 def pull_once() -> dict:
-    global _last_sha, _last_check
+    global _last_check
     if publish_enabled():
         return {"updated": False, "reason": "publisher"}
     now = time.time()
     if now - _last_check < 20:
         return {"updated": False, "reason": "recent"}
     _last_check = now
-    try:
-        sha = _remote_sha()
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError) as exc:
-        logger.warning("could not read remote database version: %s", exc)
-        return {"updated": False, "error": "remote"}
-    if sha == _last_sha:
-        return {"updated": False, "sha": sha}
     dest = DB_PATH.with_name("market.db.download")
     try:
-        _download(sha, dest)
+        _download(dest)
         if not sqlite_ok(dest):
             dest.unlink(missing_ok=True)
             return {"updated": False, "error": "invalid"}
         if DB_PATH.exists() and _file_hash(dest) == _file_hash(DB_PATH):
             dest.unlink(missing_ok=True)
-            _last_sha = sha
-            return {"updated": False, "sha": sha, "reason": "same"}
+            return {"updated": False, "reason": "same"}
         from sqlalchemy import func, select
 
         from app.database import SessionLocal, replace_database
@@ -115,13 +106,12 @@ def pull_once() -> dict:
             as_of = db.scalar(select(func.max(Trade.trade_date)))
         finally:
             db.close()
-    except Exception:
-        logger.exception("database refresh failed")
+    except Exception as exc:
+        logger.warning("could not refresh database: %s", exc)
         dest.unlink(missing_ok=True)
-        return {"updated": False, "error": "refresh"}
-    _last_sha = sha
-    logger.info("public database updated to %s", sha[:7])
-    return {"updated": True, "sha": sha, "trades": count, "as_of": as_of.isoformat() if as_of else None}
+        return {"updated": False, "error": "remote"}
+    logger.info("public database refreshed, %s trades through %s", count, as_of)
+    return {"updated": True, "trades": count, "as_of": as_of.isoformat() if as_of else None}
 
 
 def pull_loop(stop: threading.Event) -> None:
@@ -259,20 +249,22 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _remote_sha() -> str:
-    request = urllib.request.Request(COMMITS_URL, headers={"User-Agent": "jihuanshe-quant", "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        payload = json.load(response)
-    return payload[0]["sha"]
-
-
-def _download(sha: str, dest: Path) -> None:
-    request = urllib.request.Request(f"{DB_URL}?v={sha}", headers={"User-Agent": "jihuanshe-quant"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        data = response.read()
-    if len(data) > 20 * 1024 * 1024 or not data.startswith(b"SQLite format 3"):
-        raise RuntimeError("downloaded file is not a database")
-    dest.write_bytes(data)
+def _download(dest: Path) -> None:
+    errors: list[str] = []
+    for url in DB_URLS:
+        request = urllib.request.Request(url, headers={"User-Agent": "jihuanshe-quant"})
+        try:
+            with urllib.request.urlopen(request, timeout=25) as response:
+                data = response.read()
+        except Exception as exc:
+            errors.append(f"{url}: {exc}")
+            continue
+        if len(data) > 20 * 1024 * 1024 or not data.startswith(b"SQLite format 3"):
+            errors.append(f"{url}: not a database")
+            continue
+        dest.write_bytes(data)
+        return
+    raise RuntimeError("; ".join(errors) or "no download source")
 
 
 def _set_state(status: str, detail: str) -> None:
