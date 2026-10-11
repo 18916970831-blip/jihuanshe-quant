@@ -72,5 +72,26 @@ class MetricTests(unittest.TestCase):
         self.assertEqual(decision["action"], "卖出/减仓")
 
 
+class PublishTests(unittest.TestCase):
+    def test_rejects_a_non_database(self):
+        from pathlib import Path
+
+        from app.services.publish import sqlite_ok
+
+        path = Path("/tmp/quant-not-a-db.bin")
+        path.write_bytes(b"not a database")
+        self.addCleanup(path.unlink, missing_ok=True)
+        self.assertFalse(sqlite_ok(path))
+
+    def test_schedule_stays_off_without_publish_mode(self):
+        import os
+
+        from app.services.publish import publish_status, schedule_publish
+
+        os.environ.pop("QUANT_PUBLISH", None)
+        schedule_publish()
+        self.assertIsNone(publish_status())
+
+
 if __name__ == "__main__":
     unittest.main()

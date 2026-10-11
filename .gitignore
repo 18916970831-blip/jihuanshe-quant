@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 data/*.db-shm
 data/*.db-wal
+.env
 .DS_Store

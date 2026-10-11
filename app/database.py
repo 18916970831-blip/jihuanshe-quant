@@ -1,3 +1,7 @@
+import os
+import threading
+from pathlib import Path
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -20,6 +24,7 @@ def _sqlite_pragmas(dbapi_connection, _connection_record):
 
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+swap_lock = threading.RLock()
 
 
 class Base(DeclarativeBase):
@@ -27,11 +32,23 @@ class Base(DeclarativeBase):
 
 
 def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    with swap_lock:
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+
+def replace_database(src: Path) -> None:
+    """Swap in a verified SQLite file. Callers must not be inside get_db."""
+    with swap_lock:
+        engine.dispose()
+        for suffix in ("-wal", "-shm"):
+            extra = Path(str(DB_PATH) + suffix)
+            if extra.exists():
+                extra.unlink()
+        os.replace(src, DB_PATH)
 
 
 def init_db():

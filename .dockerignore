@@ -3,5 +3,6 @@ __pycache__
 *.pyc
 data/*.db-shm
 data/*.db-wal
+.env
 .git
 .DS_Store

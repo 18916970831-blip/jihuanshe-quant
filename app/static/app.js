@@ -166,8 +166,9 @@ async function refreshStatus() {
       el.hidden = state.readonly;
     });
     const suffix = state.readonly ? " · 只读分享" : "";
+    const syncNote = status.sync === "waiting" || status.sync === "pushing" ? " · 正在同步到公网" : status.sync === "error" ? " · 公网同步失败，本机分析已更新" : "";
     document.getElementById("status").textContent = status.as_of
-      ? `样本截止 ${status.as_of} · ${status.cards} 张卡 · ${status.trades} 笔成交 · ${status.alerts_open} 条未读告警${suffix}`
+      ? `样本截止 ${status.as_of} · ${status.cards} 张卡 · ${status.trades} 笔成交 · ${status.alerts_open} 条未读告警${suffix}${syncNote}`
       : "还没有成交数据";
   } catch (error) {
     document.getElementById("status").textContent = error.message;
@@ -482,7 +483,7 @@ async function submitTrade(payload, force) {
       body: JSON.stringify(payload),
     });
     msg.className = "ok";
-    msg.textContent = `已保存。当日 PSA10 真实成交 ${result.today.count} 笔，中位价 ${cny(result.today.median)}。套出：${result.trade.is_bundle ? "是" : "否"}。`;
+    msg.textContent = `已保存。当日 PSA10 真实成交 ${result.today.count} 笔，中位价 ${cny(result.today.median)}。分析已重算，公网页面大约一两分钟后自动跟上。`;
     refreshStatus();
   } catch (error) {
     if (!force && error.message.includes("强制")) {
@@ -534,7 +535,7 @@ async function renderImport() {
     box.innerHTML = `<p class="note">正在清洗并计算…</p>`;
     try {
       const result = await api("/api/import", { method: "POST", body: data });
-      box.innerHTML = `<div class="ok" style="margin-top:12px">成功 ${result.success}，失败 ${result.failed}，跳过 ${result.skipped}。竞价日期 ${esc(result.bid_date)}。</div>
+      box.innerHTML = `<div class="ok" style="margin-top:12px">成功 ${result.success}，失败 ${result.failed}，跳过 ${result.skipped}。分析已重算，公网页面大约一两分钟后自动跟上。</div>
         <table><tr><th>Sheet</th><th>代码</th><th>成功</th><th>失败</th><th>跳过</th></tr>
         ${result.sheets.map((sheet) => `<tr><td>${esc(sheet.sheet)}</td><td class="mono">${esc(sheet.card_code || "—")}</td><td>${sheet.success}</td><td>${sheet.failed}</td><td>${sheet.skipped}</td></tr>`).join("")}</table>`;
       refreshStatus();

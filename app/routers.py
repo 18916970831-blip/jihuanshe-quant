@@ -13,6 +13,7 @@ from app.models import Alert, AuditLog, Bid, Card, Event, ImportLog, Trade
 from app.schemas import BidIn, CardIn, CardPatch, EventIn, TradeIn
 from app.services.alerts import public_alert, scan_alerts
 from app.services.catalog import active_cards, analyze_card, dump_trade, market_as_of, summarize
+from app.services.publish import publish_status, schedule_publish
 from app.services.cleaning import EVENT_TYPES, detect_bundle, gem_rate, normalize_grade
 from app.services.importer import ensure_card, import_workbook, refresh_suspicious
 from app.services.report import build_report, render_docx, render_xlsx
@@ -49,7 +50,15 @@ def status(request: Request, db: Session = Depends(get_db)):
         "alerts_open": db.scalar(select(func.count()).select_from(Alert).where(Alert.is_active.is_(True), Alert.is_read.is_(False))) or 0,
         "as_of": as_of.isoformat() if as_of else None,
         "readonly": is_readonly(request),
+        "sync": publish_status(),
     }
+
+
+@router.post("/sync")
+def sync_public():
+    from app.services.publish import pull_once
+
+    return pull_once()
 
 
 @router.get("/meta")
@@ -111,6 +120,7 @@ def create_card(payload: CardIn, db: Session = Depends(get_db)):
     db.add(card)
     _audit(db, "create_card", card.card_code)
     db.commit()
+    schedule_publish()
     return _card_out(card)
 
 
@@ -126,6 +136,7 @@ def patch_card(card_code: str, payload: CardPatch, db: Session = Depends(get_db)
         card.psa_gem_rate = gem_rate(card.psa_population_total, card.psa_population_10)
     _audit(db, "update_card", card_code)
     db.commit()
+    schedule_publish()
     return _card_out(card)
 
 
@@ -214,6 +225,7 @@ def create_trade(payload: TradeIn, force: bool = False, db: Session = Depends(ge
     refresh_suspicious(db, card.card_code)
     _audit(db, "create_trade", f"{card.card_code} {payload.price} {grade}")
     db.commit()
+    schedule_publish()
     db.refresh(row)
     day_rows = db.scalars(select(Trade).where(Trade.card_code == card.card_code, Trade.trade_date == payload.trade_date, Trade.grade == "PSA10", Trade.is_bundle.is_(False))).all()
     prices = sorted(item.price for item in day_rows)
@@ -234,6 +246,7 @@ def delete_trade(trade_id: str, db: Session = Depends(get_db)):
     refresh_suspicious(db, code)
     _audit(db, "delete_trade", trade_id)
     db.commit()
+    schedule_publish()
     return {"ok": True}
 
 
@@ -250,6 +263,7 @@ def import_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     scan_alerts(db)
+    schedule_publish()
     return summary
 
 
@@ -346,6 +360,7 @@ def create_event(payload: EventIn, db: Session = Depends(get_db)):
     _audit(db, "create_event", payload.title)
     db.commit()
     scan_alerts(db)
+    schedule_publish()
     return _event_out(row)
 
 
@@ -358,6 +373,7 @@ def delete_event(event_id: str, db: Session = Depends(get_db)):
     _audit(db, "delete_event", event_id)
     db.commit()
     scan_alerts(db)
+    schedule_publish()
     return {"ok": True}
 
 
@@ -387,6 +403,7 @@ def create_bid(payload: BidIn, db: Session = Depends(get_db)):
     _audit(db, "create_bid", payload.card_code)
     db.commit()
     scan_alerts(db)
+    schedule_publish()
     return _bid_out(row)
 
 
