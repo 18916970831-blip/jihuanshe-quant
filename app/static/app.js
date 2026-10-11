@@ -208,7 +208,7 @@ async function renderDashboard() {
       </section>
       <section class="grid-2">
         <div class="panel chart-card">
-          <h3>PSA10 日中位价</h3>
+          <h3>PSA10 价格趋势</h3>
           <p class="sub" id="dash-caption"></p>
           <div id="dash-chart" class="chart tall"></div>
         </div>
@@ -237,7 +237,7 @@ async function renderDashboard() {
 async function loadDashChart(code) {
   const metrics = await api(`/api/cards/${encodeURIComponent(code)}/analysis`);
   const caption = document.getElementById("dash-caption");
-  if (caption) caption.textContent = `${metrics.card_name} · 双击卡片进入完整分析。棕色是 7 日均线，蓝色是 30 日均线。`;
+  if (caption) caption.textContent = `${metrics.card_name} · 只画 PSA10 日中位价，套出已剔除。棕色是 7 日均线，蓝色是 30 日均线。`;
   mountChart(document.getElementById("dash-chart"), priceOption({ daily: metrics.series, outliers: metrics.anomalies }, false));
 }
 
@@ -269,13 +269,13 @@ async function renderCard(code) {
       <section class="panel">
         <h3>读数</h3>
         <p>${esc(narrative(metrics))}</p>
-        <p class="note">曲线是每日全部 PSA10 成交的中位价。单笔异常默认不拉高坐标，样本最高 ${cny(metrics.high_raw)}。日均成交 ${num(volume.avg_active)} 笔，有效交易日占比 ${share(volume.active_ratio)}。</p>
+        <p class="note">价格趋势只统计 PSA10，套出已剔除。每个点是当天这些成交的中位价。单笔异常默认不拉高坐标。日均成交 ${num(volume.avg_active)} 笔，有效交易日占比 ${share(volume.active_ratio)}。</p>
         <label class="check"><input id="extreme" type="checkbox" ${state.showExtreme ? "checked" : ""}/> 在价格图里拉伸坐标，显示极端异常点</label>
       </section>
       <section class="charts">
-        ${chartBox("c1", "日中位价", "含 7 日 / 30 日均线，可缩放")}
+        ${chartBox("c1", "价格趋势", "只含 PSA10 日中位价，套出已剔除")}
         ${chartBox("c2", "日成交量", "柱为当日笔数，线为 7 日均量")}
-        ${chartBox("c3", "价量叠加", "左轴价格，右轴成交笔数")}
+        ${chartBox("c3", "价量叠加", "左轴是 PSA10 中位价，套出已剔除")}
         ${chartBox("c5", "滚动波动率", "相邻交易日收益的 7 日滚动标准差")}
         ${chartBox("c6", "回撤", "相对样本内历史高点")}
         ${chartBox("c7", "价格分布", "当前价落在标红区间")}

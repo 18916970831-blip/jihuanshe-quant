@@ -56,6 +56,20 @@ class MetricTests(unittest.TestCase):
         self.assertEqual(metrics["other_grade_count"], 1)
         self.assertLess(metrics["latest_price"], 200)
 
+    def test_price_series_keeps_only_psa10_and_drops_bundles(self):
+        records = [_trade(day, 100) for day in range(10)]
+        other = _trade(5, 9000, grade="PSA9")
+        bundled = _trade(6, 8000)
+        bundled["notes"] = "套出"
+        loose = _trade(7, 110, grade="PSA 10")
+        metrics = compute_metrics(records + [other, bundled, loose])
+        traded = [point["median"] for point in metrics["series"] if point["traded"]]
+        self.assertTrue(traded)
+        self.assertTrue(all(price < 200 for price in traded))
+        self.assertEqual(metrics["bundle_count"], 1)
+        self.assertEqual(metrics["other_grade_count"], 1)
+        self.assertEqual(metrics["psa10_count"], 11)
+
     def test_blank_bundle_note_stays_json_safe(self):
         records = [_trade(day, 100) for day in range(8)]
         bundle = _trade(4, 9000, bundle=True)

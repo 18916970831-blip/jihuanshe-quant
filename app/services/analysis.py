@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from app.services.cleaning import supply_pressure
+from app.services.cleaning import detect_bundle, normalize_grade, supply_pressure
 
 
 def _fnum(value, digits=6):
@@ -189,6 +189,12 @@ def compute_metrics(records: list[dict], bids: list[dict] | None = None, populat
         frame = frame[frame["trade_date"] >= pd.Timestamp(start)]
     if as_of is not None and not frame.empty:
         frame = frame[frame["trade_date"] <= pd.Timestamp(as_of)]
+    if not frame.empty:
+        frame["grade"] = frame["grade"].map(normalize_grade)
+        names = frame["card_name"] if "card_name" in frame.columns else pd.Series([None] * len(frame), index=frame.index)
+        notes = frame["notes"] if "notes" in frame.columns else pd.Series([None] * len(frame), index=frame.index)
+        detected = [detect_bundle(_text(name), _text(note)) for name, note in zip(names, notes)]
+        frame["is_bundle"] = frame["is_bundle"].fillna(False).astype(bool) | pd.Series(detected, index=frame.index)
 
     grade_mix = []
     if not frame.empty:
