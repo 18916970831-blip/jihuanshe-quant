@@ -31,6 +31,20 @@ def _fnum(value, digits=6):
     return round(number, digits)
 
 
+def _text(value):
+    if value is None:
+        return None
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return text or None
+
+
 def _iso(value):
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return None
@@ -320,7 +334,7 @@ def compute_metrics(records: list[dict], bids: list[dict] | None = None, populat
                 "date": _iso(row["trade_date"]),
                 "time": row["trade_datetime"].strftime("%H:%M") if pd.notna(row["trade_datetime"]) else None,
                 "price": _fnum(row["price"], 2),
-                "name": row.get("card_name"),
+                "name": _text(row.get("card_name")),
                 "reasons": list(row["anomaly_reasons"]),
                 "extreme": bool(row["price"] > high * 1.8 or row["price"] < low * 0.5),
             }
@@ -471,9 +485,9 @@ def _bundle_rows(bundles: pd.DataFrame):
                 "date": _iso(row["trade_date"]),
                 "time": row["trade_datetime"].strftime("%H:%M") if pd.notna(row["trade_datetime"]) else None,
                 "price": _fnum(row["price"], 2),
-                "grade": row["grade"],
-                "name": row.get("card_name"),
-                "notes": row.get("notes"),
+                "grade": _text(row["grade"]),
+                "name": _text(row.get("card_name")),
+                "notes": _text(row.get("notes")),
             }
         )
     return rows

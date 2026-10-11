@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import date, datetime, timedelta
 
@@ -54,6 +55,17 @@ class MetricTests(unittest.TestCase):
         self.assertEqual(metrics["bundle_count"], 1)
         self.assertEqual(metrics["other_grade_count"], 1)
         self.assertLess(metrics["latest_price"], 200)
+
+    def test_blank_bundle_note_stays_json_safe(self):
+        records = [_trade(day, 100) for day in range(8)]
+        bundle = _trade(4, 9000, bundle=True)
+        bundle["notes"] = float("nan")
+        bundle["card_name"] = float("nan")
+        metrics = compute_metrics(records + [bundle])
+        self.assertEqual(len(metrics["series"]), metrics["sample_days"])
+        self.assertIsNone(metrics["bundle_trades"][0]["notes"])
+        self.assertIsNone(metrics["bundle_trades"][0]["name"])
+        json.dumps(metrics, allow_nan=False)
 
     def test_iqr_flags_spike(self):
         records = [_trade(day, 100 + day) for day in range(20)]
