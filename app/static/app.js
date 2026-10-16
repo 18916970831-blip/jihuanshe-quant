@@ -1,5 +1,17 @@
 const charts = [];
-const state = { dashboard: null, code: null, showExtreme: false, readonly: false, editing: null, entryDate: "", entryCard: "", entryNote: "" };
+const state = {
+  dashboard: null,
+  code: null,
+  showExtreme: false,
+  readonly: false,
+  editing: null,
+  entryDate: "",
+  entryCard: "",
+  entryNote: "",
+  entryFocusPrice: false,
+  entryForm: { card: "", date: "", time: "20:00", grade: "PSA10" },
+  libraryNote: "",
+};
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -254,6 +266,7 @@ async function renderCard(code) {
       <section class="panel">
         <div class="code">${esc(metrics.card_code)} · ${esc(metrics.card_series || "")} ${metrics.region ? "· " + esc(metrics.region) : ""}</div>
         <h2>${esc(metrics.card_name)} ${chip(advice.action)}</h2>
+        ${state.readonly ? "" : `<form id="rename" class="form"><label>代码<input name="card_code" value="${esc(metrics.card_code)}" required /></label><label class="span-2">名称<input name="card_name" value="${esc(metrics.card_name)}" required /></label><div class="actions"><button class="btn" type="submit">保存</button><span id="rename-msg" class="note"></span></div></form>`}
         <p class="sub">${esc((metrics.warnings || []).join(" · ") || `样本 ${metrics.sample_start || "—"} 至 ${metrics.sample_end || "—"} · PSA10 ${metrics.psa10_count} 笔 · 套出 ${metrics.bundle_count} 笔已剔除`)}</p>
         <div class="metrics">
           ${metric("最新价", cny(metrics.latest_price))}
@@ -303,6 +316,32 @@ async function renderCard(code) {
     state.showExtreme = event.target.checked;
     drawCardCharts(metrics);
   };
+  const rename = document.getElementById("rename");
+  if (rename) {
+    rename.onsubmit = async (event) => {
+      event.preventDefault();
+      const msg = document.getElementById("rename-msg");
+      const name = rename.card_name.value.trim();
+      const nextCode = rename.card_code.value.trim();
+      if (!name || !nextCode) return;
+      try {
+        await api(`/api/cards/${encodeURIComponent(code)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ card_name: name, card_code: nextCode }),
+        });
+        if (state.entryForm.card === code) state.entryForm.card = nextCode;
+        if (state.entryCard === code) state.entryCard = nextCode;
+        if (nextCode !== code) location.hash = `#/card/${encodeURIComponent(nextCode)}`;
+        else renderCard(code);
+      } catch (error) {
+        if (msg) {
+          msg.className = "error";
+          msg.textContent = error.message;
+        }
+      }
+    };
+  }
   drawCardCharts(metrics);
 }
 
@@ -441,17 +480,23 @@ async function renderEntry() {
   const [cards, trades] = await Promise.all([api("/api/cards"), api(`/api/trades?${query}`)]);
   const today = new Date().toISOString().slice(0, 10);
   const editing = state.editing;
+  const pickedCard = editing ? editing.card_code : state.entryForm.card;
+  const pickedDate = editing ? editing.trade_date : (state.entryForm.date || today);
+  const pickedTime = editing ? (editing.trade_time || "00:00").slice(0, 5) : (state.entryForm.time || "20:00");
+  const grades = ["PSA10", "PSA9", "PSA8", "PCG10", "BGS10", "其他"];
+  const pickedGrade = editing ? editing.grade : (state.entryForm.grade || "PSA10");
+  if (pickedGrade && !grades.includes(pickedGrade)) grades.unshift(pickedGrade);
   root.innerHTML = `
     <div class="stack">
       <section class="panel">
         <h2 id="trade-title">${editing ? "修改这笔成交" : "录入一笔成交"}</h2>
-        <p class="sub">品相会自动归并，备注里出现套出、套卡、打包会标成套出，不进 PSA10 计价。</p>
+        <p class="sub">保存后会记住卡牌、日期、时间和品相，下一笔同类成交只要改价格。品相会自动归并，备注里出现套出、套卡、打包会标成套出，不进 PSA10 计价。</p>
         <form id="trade-form" class="form">
-          <label>卡牌<select name="card_code" required>${cards.map((card) => `<option value="${esc(card.card_code)}" ${editing && editing.card_code === card.card_code ? "selected" : ""}>${esc(card.card_code)} ${esc(card.card_name)}</option>`).join("")}</select></label>
-          <label>日期<input name="trade_date" type="date" value="${esc(editing ? editing.trade_date : today)}" required /></label>
-          <label>时间<input name="trade_time" type="time" value="${esc(editing ? (editing.trade_time || "00:00").slice(0, 5) : "20:00")}" /></label>
+          <label>卡牌<select name="card_code" required>${cards.map((card) => `<option value="${esc(card.card_code)}" ${pickedCard === card.card_code ? "selected" : ""}>${esc(card.card_code)} ${esc(card.card_name)}</option>`).join("")}</select></label>
+          <label>日期<input name="trade_date" type="date" value="${esc(pickedDate)}" required /></label>
+          <label>时间<input name="trade_time" type="time" value="${esc(pickedTime)}" /></label>
           <label>成交价<input name="price" type="number" min="0.01" step="0.01" required value="${editing ? esc(editing.price) : ""}" /></label>
-          <label>品相<select name="grade">${["PSA10", "PSA9", "PSA8", "PCG10", "BGS10", "其他"].map((grade) => `<option ${editing && editing.grade === grade ? "selected" : ""}>${esc(grade)}</option>`).join("")}</select></label>
+          <label>品相<select name="grade">${grades.map((grade) => `<option ${pickedGrade === grade ? "selected" : ""}>${esc(grade)}</option>`).join("")}</select></label>
           <label class="check">标记套出<input name="mark_bundle" type="checkbox" ${editing && editing.is_bundle ? "checked" : ""} /></label>
           <label class="span-3">备注<textarea name="notes" placeholder="可选">${esc(editing ? editing.notes || "" : "")}</textarea></label>
           <div class="span-3 actions">
@@ -466,22 +511,33 @@ async function renderEntry() {
         <p class="sub">最近的成交在最上面。录错了点修改，不需要了点删除。改完后分析会重算。</p>
         <form id="trade-filter" class="form">
           <label>按日期<input name="on" type="date" value="${esc(state.entryDate || "")}" /></label>
-          <label>按卡牌<select name="card_code"><option value="">全部</option>${cards.map((card) => `<option value="${esc(card.card_code)}" ${state.entryCard === card.card_code ? "selected" : ""}>${esc(card.card_code)}</option>`).join("")}</select></label>
+          <label>按卡牌<select name="card_code"><option value="">全部</option>${cards.map((card) => `<option value="${esc(card.card_code)}" ${state.entryCard === card.card_code ? "selected" : ""}>${esc(card.card_code)} ${esc(card.card_name)}</option>`).join("")}</select></label>
         </form>
         ${tradeRows(trades)}
       </section>
     </div>`;
-  document.getElementById("trade-form").onsubmit = async (event) => {
+  const tradeForm = document.getElementById("trade-form");
+  const rememberEntry = () => {
+    if (state.editing) return;
+    state.entryForm = {
+      card: tradeForm.card_code.value,
+      date: tradeForm.trade_date.value,
+      time: tradeForm.trade_time.value || "20:00",
+      grade: tradeForm.grade.value,
+    };
+  };
+  tradeForm.addEventListener("change", rememberEntry);
+  tradeForm.onsubmit = async (event) => {
     event.preventDefault();
-    const form = event.target;
+    rememberEntry();
     const payload = {
-      card_code: form.card_code.value,
-      trade_date: form.trade_date.value,
-      trade_time: form.trade_time.value ? `${form.trade_time.value}:00` : null,
-      price: Number(form.price.value),
-      grade: form.grade.value,
-      notes: form.notes.value || null,
-      mark_bundle: form.mark_bundle.checked,
+      card_code: tradeForm.card_code.value,
+      trade_date: tradeForm.trade_date.value,
+      trade_time: tradeForm.trade_time.value ? `${tradeForm.trade_time.value}:00` : null,
+      price: Number(tradeForm.price.value),
+      grade: tradeForm.grade.value,
+      notes: tradeForm.notes.value || null,
+      mark_bundle: tradeForm.mark_bundle.checked,
     };
     await submitTrade(payload, false);
   };
@@ -507,6 +563,10 @@ async function renderEntry() {
     msg.textContent = state.entryNote;
     state.entryNote = "";
   }
+  if (state.entryFocusPrice && !state.editing) {
+    state.entryFocusPrice = false;
+    tradeForm.price.focus();
+  }
 }
 
 async function submitTrade(payload, force) {
@@ -520,6 +580,7 @@ async function submitTrade(payload, force) {
       body: JSON.stringify(payload),
     });
     state.editing = null;
+    state.entryFocusPrice = true;
     state.entryNote = editing
       ? `已改成 ${cny(result.trade.price)}。当日 PSA10 中位价 ${cny(result.today.median)}。分析已重算，公网页面大约一两分钟后自动跟上。`
       : `已保存。当日 PSA10 真实成交 ${result.today.count} 笔，中位价 ${cny(result.today.median)}。分析已重算，公网页面大约一两分钟后自动跟上。`;
@@ -682,9 +743,11 @@ async function renderLibrary() {
     <div class="stack">
       <section class="panel">
         <h2>卡牌与 PSA 人口</h2>
+        <p class="sub">每一行都能改代码和名称。改完点这一行的保存，成交、竞价和事件会跟着新代码走。</p>
+        ${state.libraryNote ? `<p id="library-note" class="ok">${esc(state.libraryNote)}</p>` : `<p id="library-note" class="note"></p>`}
         <table><tr><th>代码</th><th>名称</th><th>系列</th><th>总人口</th><th>PSA10</th><th>Gem</th><th>关注</th><th></th></tr>
           ${cards.map((card) => `<tr data-card="${esc(card.card_code)}">
-            <td class="mono">${esc(card.card_code)}</td>
+            <td><input class="mono" value="${esc(card.card_code)}" data-field="card_code" /></td>
             <td><input value="${esc(card.card_name)}" data-field="card_name" /></td>
             <td><input value="${esc(card.card_series || "")}" data-field="card_series" /></td>
             <td><input value="${card.psa_population_total ?? ""}" data-field="psa_population_total" /></td>
@@ -742,8 +805,21 @@ async function renderLibrary() {
         const field = input.dataset.field;
         payload[field] = field.startsWith("psa_") ? (input.value === "" ? null : Number(input.value)) : input.value;
       });
-      await api(`/api/cards/${encodeURIComponent(button.dataset.save)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      renderLibrary();
+      try {
+        const saved = await api(`/api/cards/${encodeURIComponent(button.dataset.save)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        if (state.entryForm.card === button.dataset.save) state.entryForm.card = saved.card_code;
+        if (state.entryCard === button.dataset.save) state.entryCard = saved.card_code;
+        if (state.code === button.dataset.save) state.code = saved.card_code;
+        state.libraryNote = `已保存 ${saved.card_code} 的资料。`;
+        renderLibrary();
+      } catch (error) {
+        state.libraryNote = "";
+        const note = document.getElementById("library-note");
+        if (note) {
+          note.className = "error";
+          note.textContent = error.message;
+        }
+      }
     };
   });
   document.getElementById("card-form").onsubmit = async (event) => {

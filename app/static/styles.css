@@ -102,6 +102,7 @@ input, select, textarea {
 }
 textarea { min-height: 72px; resize: vertical; }
 .span-2 { grid-column: span 2; }
+.span-2 { grid-column: span 2; }
 .span-3 { grid-column: span 3; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .btn, button.btn {

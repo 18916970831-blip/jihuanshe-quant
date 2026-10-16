@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.access import is_readonly
@@ -124,23 +124,66 @@ def create_card(payload: CardIn, db: Session = Depends(get_db)):
     return _card_out(card)
 
 
-@router.patch("/cards/{card_code}")
+def _rename_card(db: Session, card: Card, new_code: str) -> Card:
+    new_code = new_code.strip()
+    if not new_code:
+        raise HTTPException(400, "卡牌代码不能为空")
+    if len(new_code) > 50:
+        raise HTTPException(400, "卡牌代码不能超过 50 个字符")
+    if new_code == card.card_code:
+        return card
+    if db.get(Card, new_code) is not None:
+        raise HTTPException(409, "这个卡牌代码已经有了")
+    old = card.card_code
+    copied = {column.name: getattr(card, column.name) for column in Card.__table__.columns if column.name != "card_code"}
+    db.add(Card(card_code=new_code, **copied))
+    db.flush()
+    for model in (Trade, Bid, Event, Alert):
+        db.execute(update(model).where(model.card_code == old).values(card_code=new_code))
+    db.flush()
+    marker = f"|{old}|"
+    for row in db.scalars(select(Alert).where(Alert.card_code == new_code)).all():
+        if marker in row.fingerprint:
+            row.fingerprint = row.fingerprint.replace(marker, f"|{new_code}|", 1)
+    db.flush()
+    db.expire_all()
+    stale = db.get(Card, old)
+    if stale is not None:
+        db.delete(stale)
+        db.flush()
+    renamed = db.get(Card, new_code)
+    if renamed is None:
+        raise HTTPException(500, "卡牌代码没有改成")
+    return renamed
+
+
+@router.patch("/cards/{card_code:path}")
 def patch_card(card_code: str, payload: CardPatch, db: Session = Depends(get_db)):
     card = db.get(Card, card_code)
     if card is None:
         raise HTTPException(404, "找不到卡牌")
     data = payload.model_dump(exclude_unset=True)
+    new_code = data.pop("card_code", None)
+    if "card_name" in data:
+        name = str(data["card_name"] or "").strip()
+        if not name:
+            raise HTTPException(400, "卡牌名称不能为空")
+        data["card_name"] = name
     for key, value in data.items():
         setattr(card, key, value)
+    if "card_name" in data:
+        db.execute(update(Trade).where(Trade.card_code == card.card_code).values(card_name=card.card_name))
     if "psa_population_total" in data or "psa_population_10" in data:
         card.psa_gem_rate = gem_rate(card.psa_population_total, card.psa_population_10)
-    _audit(db, "update_card", card_code)
+    if new_code is not None:
+        card = _rename_card(db, card, str(new_code))
+    _audit(db, "update_card", card.card_code if card.card_code == card_code else f"{card_code} -> {card.card_code}")
     db.commit()
     schedule_publish()
     return _card_out(card)
 
 
-@router.get("/cards/{card_code}/analysis")
+@router.get("/cards/{card_code:path}/analysis")
 def card_analysis(
     card_code: str,
     start: date | None = None,

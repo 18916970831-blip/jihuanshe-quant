@@ -26,6 +26,7 @@ class CardIn(BaseModel):
 
 
 class CardPatch(BaseModel):
+    card_code: str | None = None
     card_name: str | None = None
     card_series: str | None = None
     card_type: str | None = None
