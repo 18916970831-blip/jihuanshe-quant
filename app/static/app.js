@@ -11,6 +11,9 @@ const state = {
   entryFocusPrice: false,
   entryForm: { card: "", date: "", time: "20:00", grade: "PSA10" },
   libraryNote: "",
+  quoteCard: "",
+  quotePrice: "",
+  quoteSource: "闲鱼",
 };
 
 function esc(value) {
@@ -42,6 +45,11 @@ function share(value) {
 function tone(value) {
   if (value === null || value === undefined || Number(value) === 0) return "flat";
   return Number(value) > 0 ? "up" : "down";
+}
+
+function verdictChip(verdict) {
+  const cls = verdict === "可以买" ? "buy" : verdict === "先别买" ? "sell" : verdict === "再还价" || verdict === "先核对" ? "wait" : "";
+  return `<span class="chip ${cls}">${esc(verdict || "—")}</span>`;
 }
 
 function chip(action) {
@@ -854,10 +862,68 @@ async function renderLibrary() {
   });
 }
 
+async function renderQuote() {
+  const root = viewRoot();
+  const cards = await api("/api/cards");
+  const picked = state.quoteCard || (cards[0] && cards[0].card_code) || "";
+  root.innerHTML = `
+    <div class="stack">
+      <section class="panel">
+        <h2>询价</h2>
+        <p class="sub">在闲鱼或集换社看到一个价，填进来。比较的是这张卡最近的 PSA10 日中位价，套出已经剔除。这只判断这一笔挂牌价，不是投资建议。</p>
+        <form id="quote-form" class="form">
+          <label class="span-2">卡牌<select name="card_code" required>${cards.map((card) => `<option value="${esc(card.card_code)}" ${picked === card.card_code ? "selected" : ""}>${esc(card.card_code)} ${esc(card.card_name)}</option>`).join("")}</select></label>
+          <label>挂牌价<input name="price" type="number" min="0.01" step="0.01" required value="${esc(state.quotePrice)}" placeholder="看到的价格" /></label>
+          <label>在哪看到<select name="source">${["闲鱼", "集换社", "其他"].map((item) => `<option ${state.quoteSource === item ? "selected" : ""}>${esc(item)}</option>`).join("")}</select></label>
+          <div class="actions"><button class="btn" type="submit">看能不能买</button></div>
+        </form>
+        <div id="quote-result"></div>
+      </section>
+    </div>`;
+  document.getElementById("quote-form").onsubmit = async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const box = document.getElementById("quote-result");
+    state.quoteCard = form.card_code.value;
+    state.quotePrice = form.price.value;
+    state.quoteSource = form.source.value;
+    box.innerHTML = `<p class="note">正在对照最近的 PSA10 成交…</p>`;
+    try {
+      const query = new URLSearchParams({
+        card_code: form.card_code.value,
+        price: form.price.value,
+        source: form.source.value,
+      });
+      const result = await api(`/api/quote?${query}`);
+      box.innerHTML = quoteResult(result);
+    } catch (error) {
+      box.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+    }
+  };
+}
+
+function quoteResult(result) {
+  const gap = result.gap == null ? "—" : pct(result.gap);
+  return `
+    <div class="stack" style="margin-top:16px">
+      <h3 style="margin:0">${verdictChip(result.verdict)} ${esc(result.card_name || "")}</h3>
+      <p>${esc(result.headline)}</p>
+      <div class="metrics">
+        ${metric("挂牌价", cny(result.ask))}
+        ${metric("最近 PSA10 中位价", cny(result.latest_price))}
+        ${metric("相差", gap, tone(result.gap))}
+        ${metric("还价参考", result.counter ? cny(result.counter) : "—")}
+      </div>
+      <ul class="list">${(result.reasons || []).map((line) => `<li>${esc(line)}</li>`).join("")}</ul>
+      <p class="note">${esc(result.source ? `来源记的是${result.source}。` : "")}对照的是 ${esc(result.latest_date || "—")} 的 PSA10 成交，套出不在里面。</p>
+    </div>`;
+}
+
 const routes = [
   { test: (hash) => hash === "#/dashboard" || hash === "" || hash === "#", view: "dashboard", run: renderDashboard },
   { test: (hash) => hash.startsWith("#/card/"), view: "dashboard", run: (hash) => renderCard(decodeURIComponent(hash.slice(7))) },
   { test: (hash) => hash === "#/compare", view: "compare", run: renderCompare },
+  { test: (hash) => hash === "#/quote", view: "quote", run: renderQuote },
   { test: (hash) => hash === "#/entry", view: "entry", run: renderEntry },
   { test: (hash) => hash === "#/import", view: "import", run: renderImport },
   { test: (hash) => hash === "#/report", view: "report", run: renderReport },

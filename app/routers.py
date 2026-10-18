@@ -13,6 +13,7 @@ from app.models import Alert, AuditLog, Bid, Card, Event, ImportLog, Trade
 from app.schemas import BidIn, CardIn, CardPatch, EventIn, TradeIn
 from app.services.alerts import public_alert, scan_alerts
 from app.services.catalog import active_cards, analyze_card, dump_trade, market_as_of, summarize
+from app.services.quote import judge_quote
 from app.services.publish import publish_status, schedule_publish
 from app.services.cleaning import EVENT_TYPES, detect_bundle, gem_rate, normalize_grade
 from app.services.importer import ensure_card, import_workbook, refresh_suspicious
@@ -194,6 +195,20 @@ def card_analysis(
     if card is None:
         raise HTTPException(404, "找不到卡牌")
     return analyze_card(db, card, start=start, end=end)
+
+
+@router.get("/quote")
+def quote_price(
+    card_code: str,
+    price: float = Query(gt=0),
+    source: str | None = None,
+    db: Session = Depends(get_db),
+):
+    card = db.get(Card, card_code)
+    if card is None:
+        raise HTTPException(404, "找不到卡牌")
+    metrics = analyze_card(db, card, end=market_as_of(db))
+    return judge_quote(metrics, price, source)
 
 
 @router.get("/compare")

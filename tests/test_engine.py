@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from app.services.advice import decide
 from app.services.analysis import compute_metrics
 from app.services.cleaning import detect_bundle, normalize_grade
+from app.services.quote import judge_quote
 
 
 def _trade(day, price, grade="PSA10", bundle=False, hour=12):
@@ -114,6 +115,53 @@ class MetricTests(unittest.TestCase):
         self.assertEqual(decision["action"], "观望")
         self.assertTrue(any("不追" in line for line in decision["reasons"]))
         self.assertGreaterEqual(len(decision["reasons"]), 3)
+
+
+class QuoteTests(unittest.TestCase):
+    def test_rich_listing_is_not_a_buy(self):
+        result = judge_quote(_quote_metrics(), 1700, "闲鱼")
+        self.assertEqual(result["verdict"], "先别买")
+        self.assertEqual(result["source"], "闲鱼")
+
+    def test_discount_can_be_bought(self):
+        result = judge_quote(_quote_metrics(), 1300, "集换社")
+        self.assertEqual(result["verdict"], "可以买")
+
+    def test_small_premium_is_a_counter(self):
+        result = judge_quote(_quote_metrics(), 1550)
+        self.assertEqual(result["verdict"], "再还价")
+        self.assertEqual(result["counter"], 1429)
+
+    def test_too_cheap_needs_a_check(self):
+        result = judge_quote(_quote_metrics(), 800)
+        self.assertEqual(result["verdict"], "先核对")
+
+    def test_discount_during_a_breakdown_is_not_a_buy(self):
+        metrics = _quote_metrics()
+        metrics["advice"] = {"action": "强卖出"}
+        result = judge_quote(metrics, 1300)
+        self.assertEqual(result["verdict"], "先别买")
+
+    def test_missing_psa10_cannot_be_judged(self):
+        result = judge_quote({"has_psa10": False, "card_name": "空卡"}, 100)
+        self.assertEqual(result["verdict"], "无法判断")
+
+
+def _quote_metrics():
+    return {
+        "has_psa10": True,
+        "card_code": "SV-P-260",
+        "card_name": "东北皮卡丘",
+        "latest_price": 1429,
+        "latest_date": "2026-10-10",
+        "low": 888,
+        "high": 1500,
+        "returns": {"d7": {"return": 0.04}, "d30": {"return": -0.02}},
+        "volume": {"change_7d": 0.1},
+        "risk": {"max_drawdown": -0.2},
+        "divergence": {"signal": "价升量增"},
+        "advice": {"action": "买入"},
+    }
 
 
 class PublishTests(unittest.TestCase):
